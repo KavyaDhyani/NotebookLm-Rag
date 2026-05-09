@@ -4,6 +4,8 @@ A RAG-powered document assistant built with Next.js. Upload any PDF or TXT file 
 
 Built as Assignment 03 for the AI/ML course.
 
+**Live Demo:** [https://notebook-lm-rag-six.vercel.app](https://notebook-lm-rag-six.vercel.app)
+
 ---
 
 ## What It Does
