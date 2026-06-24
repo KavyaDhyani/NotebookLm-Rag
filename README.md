@@ -1,21 +1,18 @@
-# NotebookLM — RAG Document Assistant
+# NotebookLM — Corrective RAG (CRAG)
 
-A RAG-powered document assistant built with Next.js. Upload any PDF or TXT file and have a conversation with it. Answers are grounded strictly in the uploaded document.
+An advanced RAG-powered document assistant built with Next.js. Upload any PDF or TXT file and have a conversation with it. This system implements **Corrective RAG (CRAG)** to completely eliminate hallucination by grading context chunks for relevance *before* they reach the generation model, ensuring answers are strictly grounded in your document.
 
-Built as Assignment 03 for the AI/ML course.
-
-**Live Demo:** [https://notebook-lm-rag-six.vercel.app](https://notebook-lm-rag-six.vercel.app)
+Built with a premium dark-mode glassmorphic UI, real-time explainability metrics, and local document history persistence.
 
 ---
 
-## What It Does
+## What It Does & CRAG Pipeline
 
-1. User uploads a PDF or TXT file
-2. The document is parsed, chunked, and embedded
-3. Embeddings are stored in a Qdrant vector database
-4. User asks questions in a chat interface
-5. The system retrieves the most relevant chunks
-6. The LLM answers strictly from the retrieved context — no hallucination
+1. **Ingestion:** User uploads a PDF/TXT. The file is parsed, chunked, embedded via GitHub Models (`text-embedding-3-large`), and securely isolated in a Qdrant vector database using a unique `document_id`.
+2. **Vector Search:** When you ask a question, the system retrieves the Top-K most similar chunks from your *isolated document scope*.
+3. **Semantic Grading (Corrective Step):** A secondary LLM evaluator analyzes each retrieved chunk against your question, strictly classifying them as `RELEVANT` or `IRRELEVANT`. 
+4. **Explainability & Metrics:** The backend measures latency for both vector retrieval and semantic grading, and streams these metrics to the frontend UI alongside the raw source chunks and their grading badges.
+5. **Grounded Generation:** Only the `RELEVANT` chunks are passed to the final generation model (`gpt-4o-mini`). If 0 chunks pass, the system executes a safe fallback rather than hallucinating.
 
 ---
 
@@ -25,8 +22,9 @@ Built as Assignment 03 for the AI/ML course.
 |---|---|
 | Framework | Next.js 16 (App Router) |
 | Language | JavaScript |
-| Styling | Tailwind CSS |
-| LLM & Embeddings | GitHub Models (OpenAI via GitHub inference) |
+| Styling | Tailwind CSS v4 + `@tailwindcss/typography` |
+| UI/UX | Premium Dark Mode, Glassmorphism, `sonner` Toasts |
+| LLM & Embeddings | GitHub Models Inference API (`gpt-4o-mini` & `text-embedding-3-large`) |
 | Vector Database | Qdrant Cloud |
 | PDF Parsing | pdf-parse |
 | Chunking | LangChain RecursiveCharacterTextSplitter |
@@ -34,19 +32,12 @@ Built as Assignment 03 for the AI/ML course.
 
 ---
 
-## RAG Pipeline
+## Features
 
-```
-Upload → Parse → Chunk → Embed → Store in Qdrant
-                                        ↓
-Question → Embed Query → Retrieve Chunks → Generate Grounded Answer
-```
-
-- **Chunking:** RecursiveCharacterTextSplitter with `chunkSize: 1000` and `chunkOverlap: 200`
-- **Embedding model:** `openai/text-embedding-3-large` (3072 dimensions)
-- **LLM:** `openai/gpt-4.1-mini` via GitHub Models
-- **Retrieval:** Top 5 most similar chunks by cosine similarity
-- **Grounding:** Model is strictly instructed to answer only from retrieved context
+- **Document Isolation:** Qdrant payload filters ensure that queries can never leak into other uploaded documents.
+- **Explainability Dashboard:** See exactly how many chunks were fetched, how many passed the semantic grader, and inspect the raw text of the chunks to verify why the AI answered the way it did.
+- **Persistent History:** Your uploaded documents are remembered via browser `localStorage`. Refresh the page and your documents are instantly ready in the sidebar without needing re-uploading.
+- **Telemetry Streaming:** Pipeline metrics are injected directly into the HTTP stream, ensuring the dashboard renders before the LLM even begins streaming its text.
 
 ---
 
@@ -55,22 +46,22 @@ Question → Embed Query → Retrieve Chunks → Generate Grounded Answer
 ```
 app/
   api/
-    upload/route.js       # Handles file upload and ingestion
-    chat/route.js         # Handles question answering with streaming
-  page.js                 # Main page
-  layout.js               # Root layout
-  globals.css             # Global styles
+    upload/route.js       # Handles file upload, embedding, and Qdrant ingestion
+    chat/route.js         # CRAG Pipeline: Retrieval -> Grading -> Stream Generation
+  page.js                 # Main split-pane layout and localStorage hydration
+  layout.js               # Root layout, Next/Font config, Toaster
+  globals.css             # Global dark theme CSS and micro-animations
 
 components/
-  UploadBox.jsx           # File upload UI with drag and drop
-  ChatBox.jsx             # Chat interface with streaming support
-  MessageBubble.jsx       # Individual message bubble with markdown
+  UploadBox.jsx           # Drag-and-drop upload zone with loading telemetry
+  ChatBox.jsx             # Chat interface, Stream parser, and Metrics Dashboard
+  MessageBubble.jsx       # Individual message rendering with @tailwindcss/typography
 
 lib/
-  processPdf.js           # PDF parsing and chunking
-  openai.js               # Embeddings and LLM calls
-  qdrant.js               # Qdrant vector store operations
-  rag.js                  # Orchestrates the full RAG pipeline
+  processPdf.js           # PDF parsing and metadata chunking
+  evaluator.js            # Semantic Grader LLM logic
+  openai.js               # Embeddings and chat completions (GitHub Models)
+  qdrant.js               # Qdrant vector store operations and payload filtering
 ```
 
 ---
@@ -87,7 +78,7 @@ cd notebooklm-rag
 ### 2. Install dependencies
 
 ```bash
-npm install
+pnpm install
 ```
 
 ### 3. Set up environment variables
@@ -111,55 +102,22 @@ QDRANT_COLLECTION_NAME=notebooklm-rag
 ### 4. Run the development server
 
 ```bash
-npm run dev
+pnpm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
-## How to Use
-
-1. Open the app in your browser
-2. Upload a PDF or TXT file using the upload area
-3. Wait for the document to be indexed (you'll see a chunk count on success)
-4. Ask any question about the document in the chat
-5. The AI will answer strictly from the document content
-
----
-
-## API Routes
+## API Routes Overview
 
 ### `POST /api/upload`
-
-Accepts a `multipart/form-data` request with a `file` field.
-
-- Parses the document
-- Chunks it using RecursiveCharacterTextSplitter
-- Generates embeddings via GitHub Models
-- Stores embeddings in Qdrant
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Document processed successfully. 42 chunks indexed.",
-  "totalChunks": 42
-}
-```
+Accepts a `multipart/form-data` request with a `file` field. Parses the document, generates a unique `document_id`, chunks it, and pushes vectors to Qdrant. Returns the generated `document_id` and `file_name` for client-side state management.
 
 ### `POST /api/chat`
-
-Accepts a JSON body with a `question` field. Returns a streamed plain text response.
-
-**Request:**
-```json
-{
-  "question": "What is this document about?"
-}
-```
-
-**Response:** Streamed `text/plain` tokens
-
----
-
+Accepts `{"question": "...", "documentId": "...", "fileName": "..."}`.
+Executes the CRAG pipeline:
+1. Embeds query.
+2. Filters Qdrant by `documentId`.
+3. Calls `evaluator.js` to grade chunks.
+4. Returns a `text/plain` stream. The first chunk of the stream contains a specialized `___METRICS___{...}___END_METRICS___` JSON string, followed immediately by the LLM markdown response tokens.
