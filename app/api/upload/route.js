@@ -27,12 +27,13 @@ export async function POST(request) {
     const buffer = Buffer.from(arrayBuffer);
 
     // Run the full ingestion pipeline
-    const result = await ingestDocument(buffer, mimeType);
+    const result = await ingestDocument(buffer, mimeType, file.name);
 
     return NextResponse.json({
       success: true,
       message: `Document processed successfully. ${result.totalChunks} chunks indexed.`,
       totalChunks: result.totalChunks,
+      document_id: result.document_id,
     });
   } catch (error) {
     console.error("Upload error:", error);
