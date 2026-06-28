@@ -1,4 +1,4 @@
-import { generateSingleEmbedding, generateAnswerStream } from "@/lib/openai.js";
+import { generateSingleEmbedding, generateAnswerStream, rewriteQuery } from "@/lib/openai.js";
 import { retrieveRelevantChunks } from "@/lib/qdrant.js";
 import { gradeChunks } from "@/lib/evaluator.js";
 
@@ -14,12 +14,18 @@ export async function POST(request) {
       );
     }
 
-    // Step 1: Embed the user query
+    // Step 1: Rewrite and Embed the user query
     const startVector = Date.now();
-    const queryEmbedding = await generateSingleEmbedding(question.trim());
+    const originalQuery = question.trim();
+    
+    // Correct typos and rephrase for better semantic search
+    const rewrittenQuery = await rewriteQuery(originalQuery);
+    console.log(`[CRAG] Original: "${originalQuery}" | Rewritten: "${rewrittenQuery}"`);
+
+    const queryEmbedding = await generateSingleEmbedding(rewrittenQuery);
 
     // Step 2: Retrieve relevant chunks
-    console.log(`[CRAG] Query: "${question.trim()}" | DocumentId: ${documentId}`);
+    console.log(`[CRAG] Querying Qdrant for DocumentId: ${documentId}`);
     const retrievedChunks = await retrieveRelevantChunks(queryEmbedding, documentId, 5);
     const vectorLatency = Date.now() - startVector;
     console.log(`[CRAG] Retrieved ${retrievedChunks?.length || 0} chunks in ${vectorLatency}ms`);
@@ -32,6 +38,8 @@ export async function POST(request) {
         vectorLatency,
         graderLatency: 0,
         fileName: fileName || "Unknown",
+        originalQuery,
+        rewrittenQuery,
         chunks: [],
       };
       return createStreamResponse("I could not find this information in the uploaded document.", fallbackMetrics);
@@ -39,7 +47,7 @@ export async function POST(request) {
 
     // Step 3: Grade the chunks (CRAG)
     const startGrader = Date.now();
-    const gradedChunks = await gradeChunks(question.trim(), retrievedChunks);
+    const gradedChunks = await gradeChunks(rewrittenQuery, retrievedChunks);
     const graderLatency = Date.now() - startGrader;
 
     const passedChunks = gradedChunks.filter(c => c.grade === "RELEVANT");
@@ -50,6 +58,8 @@ export async function POST(request) {
       vectorLatency,
       graderLatency,
       fileName: fileName || "Unknown",
+      originalQuery,
+      rewrittenQuery,
       chunks: gradedChunks.map(c => ({ content: c.content, grade: c.grade }))
     };
 
@@ -59,7 +69,7 @@ export async function POST(request) {
     }
 
     // Step 4: Get the stream from OpenAI
-    const stream = await generateAnswerStream(question.trim(), passedChunks);
+    const stream = await generateAnswerStream(rewrittenQuery, passedChunks);
 
     // Return ReadableStream with metrics prefixed
     return createOpenAIStreamResponse(stream, metrics);
